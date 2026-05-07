@@ -1,182 +1,197 @@
 import asyncio
 import logging
+import os
+from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F
+from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart
-from aiogram.types import (
-    Message,
-    CallbackQuery,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    LabeledPrice,
-    PreCheckoutQuery,
-)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-# ================= НАСТРОЙКИ БОТА =================
+# Загружаем переменные окружения из файла .env (он должен лежать в той же папке)
+load_dotenv()
 
-# 1. Токен вашего бота (получить у @BotFather)
-BOT_TOKEN = "ВАШ_ТОКЕН_БОТА_ОТ_BOTFATHER"
+# Получаем токен бота из переменных окружения
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# 2. Токен провайдера ЮKassa (получить у @BotFather -> Bot Settings -> Payments -> YooKassa)
-PROVIDER_TOKEN = "ВАШ_ТОКЕН_ЮKASSA_ОТ_BOTFATHER"
+# Проверка безопасности: если токен не найден, скрипт сразу остановится и выдаст ошибку
+if not BOT_TOKEN:
+    raise ValueError("ОШИБКА: Токен бота не найден! Убедитесь, что вы создали файл .env и добавили туда BOT_TOKEN.")
 
-# ================= ДАННЫЕ О КУРСАХ =================
-# Структура: 'ID_курса': {'название', 'цена_в_рублях', 'ссылка_на_канал'}
-COURSES = {
-    "course_1": {
-        "title": "Курс с нуля",
-        "price": 5000, # Цена в рублях (без копеек)
-        "link": "https://t.me/+UniqLink1",
-        "description": "Базовый курс для начинающих мастеров."
-    },
-    "course_2": {
-        "title": "Повышение квалификации",
-        "price": 7000,
-        "link": "https://t.me/+UniqLink2",
-        "description": "Курс для мастеров с опытом работы."
-    },
-    "course_3": {
-        "title": "Выход из черного",
-        "price": 6000,
-        "link": "https://t.me/+UniqLink3",
-        "description": "Секреты и техники безопасного выхода из черного цвета."
-    },
-    "course_4": {
-        "title": "Наращивание волос",
-        "price": 10000,
-        "link": "https://t.me/+UniqLink4",
-        "description": "Полный курс по капсульному наращиванию."
-    },
-    "course_5": {
-        "title": "Сложные техники окрашивания",
-        "price": 8500,
-        "link": "https://t.me/+UniqLink5",
-        "description": "Airtouch, Shatush, Balayage."
-    },
-    "course_6": {
-        "title": "Стрижки",
-        "price": 4000,
-        "link": "https://t.me/+UniqLink6",
-        "description": "Современные женские стрижки."
-    },
-    "course_7": {
-        "title": "Total Blonde",
-        "price": 5500,
-        "link": "https://t.me/+UniqLink7",
-        "description": "Идеальный блонд без повреждения волос."
-    }
-}
+# Включаем логирование
+logging.basicConfig(level=logging.INFO)
 
-# Инициализация бота и диспетчера
+# Инициализируем бота и диспетчер
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# ================= ОБРАБОТЧИКИ =================
+# База данных курсов
+# months_installment - количество месяцев для рассрочки (6 для 1-3, 3 для 4-7)
+COURSES = {
+    "course_1": {"name": "Курс с 0-ля", "price": 350000, "months_installment": 6},
+    "course_2": {"name": "Повышение квалификации", "price": 150000, "months_installment": 6},
+    "course_3": {"name": "Сложные техники окрашивания", "price": 70000, "months_installment": 6},
+    "course_4": {"name": "Total Blonde", "price": 25000, "months_installment": 3},
+    "course_5": {"name": "Выход из чёрного", "price": 30000, "months_installment": 3},
+    "course_6": {"name": "Наращивание волос", "price": 50000, "months_installment": 3},
+    "course_7": {"name": "Стрижки", "price": 30000, "months_installment": 3},
+}
+
+# Вспомогательная функция для красивого форматирования чисел (100000 -> 100 000)
+def format_price(price: float) -> str:
+    return f"{int(price):,.0f}".replace(",", " ")
+
+# --- ОБРАБОТЧИКИ КОМАНД ---
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     """
-    Обработчик команды /start.
-    Выводит приветствие и клавиатуру с выбором курсов.
+    Обработчик команды /start. Приветствует и выводит список курсов.
     """
-    builder = InlineKeyboardBuilder()
+    welcome_text = (
+        "👋 <b>Добро пожаловать в нашу академию!</b>\n\n"
+        "Ниже представлен список наших закрытых Telegram-каналов с курсами.\n"
+        "Выберите интересующее вас направление, чтобы узнать подробности и варианты оплаты:"
+    )
     
-    # Создаем кнопки для каждого курса динамически из словаря COURSES
+    # Создаем клавиатуру со списком курсов
+    builder = InlineKeyboardBuilder()
     for course_id, course_data in COURSES.items():
         builder.button(
-            text=course_data["title"],
-            callback_data=f"buy_{course_id}" # callback_data будет вида buy_course_1
+            text=f"🎓 {course_data['name']}",
+            callback_data=f"select_{course_id}"
         )
-    
     # Располагаем кнопки по одной в ряд
     builder.adjust(1)
     
-    welcome_text = (
-        f"Здравствуйте, {message.from_user.first_name}! 👋\n\n"
-        "Добро пожаловать в нашу академию красоты. Выберите интересующий вас курс из списка ниже, "
-        "чтобы узнать подробности и произвести оплату."
-    )
-    
-    await message.answer(welcome_text, reply_markup=builder.as_markup())
+    await message.answer(welcome_text, reply_markup=builder.as_markup(), parse_mode="HTML")
 
 
-@dp.callback_query(F.data.startswith("buy_"))
+@dp.callback_query(F.data.startswith("select_"))
 async def process_course_selection(callback: CallbackQuery):
     """
-    Обработчик нажатия на кнопку курса.
-    Формирует и отправляет счет на оплату (Invoice).
+    Обработчик выбора курса. Вычисляет цены и предлагает варианты оплаты.
     """
-    # Получаем ID курса из callback_data (отрезаем 'buy_')
-    course_id = callback.data.replace("buy_", "")
+    # Извлекаем ID курса из callback_data (например, 'course_1' из 'select_course_1')
+    course_id = callback.data.replace("select_", "")
     course = COURSES.get(course_id)
     
     if not course:
         await callback.answer("Ошибка: Курс не найден.", show_alert=True)
         return
+
+    # Логика расчетов
+    base_price = course["price"]
+    months = course["months_installment"]
     
-    # Убираем часики на кнопке в Telegram
-    await callback.answer()
-    
-    # Цена в Telegram Payments указывается в минимальных единицах валюты (копейках)
-    # Поэтому умножаем цену в рублях на 100
-    price_in_kopecks = course["price"] * 100
-    prices = [LabeledPrice(label=course["title"], amount=price_in_kopecks)]
-    
-    # Отправляем счет
-    await bot.send_invoice(
-        chat_id=callback.message.chat.id,
-        title=course["title"],
-        description=course["description"],
-        payload=course_id, # Важный параметр! Сюда мы кладем ID курса, чтобы после оплаты понять, за что заплатили
-        provider_token=PROVIDER_TOKEN,
-        currency="RUB",
-        prices=prices,
-        start_parameter="course-payment"
+    # Рассрочка: наценка 20%
+    installment_total_price = base_price * 1.20
+    # Ежемесячный платеж
+    monthly_payment = installment_total_price / months
+
+    # Формируем текст с предложением
+    text = (
+        f"Вы выбрали: <b>«{course['name']}»</b>\n\n"
+        f"Доступно два варианта оплаты:\n\n"
+        f"<b>1️⃣ Оплата сразу (Полная стоимость)</b>\n"
+        f"Стоимость: <b>{format_price(base_price)} руб.</b>\n\n"
+        
+        f"<b>2️⃣ Ежемесячная оплата (на {months} месяцев)</b>\n"
+        f"<i>При рассрочке общая стоимость курса увеличивается на 20% и составит {format_price(installment_total_price)} руб.</i>\n"
+        f"Сумма ежемесячного платежа: <b>{format_price(monthly_payment)} руб. / мес.</b>\n\n"
+        f"Выберите удобный для вас вариант:"
     )
 
-@dp.pre_checkout_query()
-async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery):
-    """
-    Обязательный обработчик Telegram Payments.
-    Telegram спрашивает бота за секунду до списания денег: "Всё ок? Товар еще в наличии?"
-    Мы должны ответить ok=True, чтобы оплата прошла.
-    """
-    await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
-
-
-@dp.message(F.successful_payment)
-async def process_successful_payment(message: Message):
-    """
-    Обработчик успешной оплаты.
-    Срабатывает после того, как ЮKassa подтвердила платеж.
-    """
-    # Достаем payload (наш ID курса), который мы передавали в send_invoice
-    purchased_course_id = message.successful_payment.invoice_payload
-    course = COURSES.get(purchased_course_id)
+    # Создаем клавиатуру выбора оплаты
+    builder = InlineKeyboardBuilder()
     
-    if course:
-        # Формируем сообщение с секретной ссылкой
-        success_text = (
-            f"🎉 Поздравляем с успешной оплатой!\n\n"
-            f"Вы приобрели курс: <b>{course['title']}</b>.\n\n"
-            f"Ваша индивидуальная ссылка для доступа к материалам канала:\n"
-            f"{course['link']}\n\n"
-            f"Успешного обучения! 📚"
-        )
-        await message.answer(success_text, parse_mode="HTML")
-    else:
-        # На случай непредвиденных сбоев
-        await message.answer("Оплата прошла успешно, но произошла ошибка с выдачей ссылки. Пожалуйста, обратитесь к администратору.")
+    # Кнопка полной оплаты
+    builder.button(
+        text=f"💳 Оплатить сразу ({format_price(base_price)} руб.)",
+        callback_data=f"pay_full_{course_id}"
+    )
+    # Кнопка рассрочки
+    builder.button(
+        text=f"🔄 Рассрочка ({format_price(monthly_payment)} руб./мес)",
+        callback_data=f"pay_sub_{course_id}"
+    )
+    # Кнопка возврата к списку
+    builder.button(
+        text="🔙 Назад к списку курсов",
+        callback_data="back_to_list"
+    )
+    builder.adjust(1) # По одной кнопке в ряд
 
-# ================= ЗАПУСК БОТА =================
+    # Обновляем сообщение (вместо отправки нового, редактируем старое)
+    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+
+
+@dp.callback_query(F.data.startswith("pay_"))
+async def process_payment(callback: CallbackQuery):
+    """
+    Обработчик нажатия на кнопку оплаты.
+    """
+    # Разбираем callback_data
+    parts = callback.data.split("_")
+    payment_type = parts[1] # 'full' или 'sub'
+    course_id = f"{parts[2]}_{parts[3]}"
+    course = COURSES.get(course_id)
+
+    if payment_type == "full":
+        amount = course['price']
+        payment_text = (
+            f"🧾 <b>Счет на оплату сформирован!</b>\n"
+            f"Курс: {course['name']}\n"
+            f"Тип: Единоразовый платеж\n"
+            f"К оплате: <b>{format_price(amount)} руб.</b>\n\n"
+            f"<i>Здесь будет кнопка ЮKassa для оплаты (send_invoice)</i>"
+        )
+    else:
+        amount = (course['price'] * 1.20) / course['months_installment']
+        payment_text = (
+            f"🧾 <b>Подписка на рассрочку сформирована!</b>\n"
+            f"Курс: {course['name']}\n"
+            f"Тип: Ежемесячный платеж (1 из {course['months_installment']})\n"
+            f"К списанию сейчас: <b>{format_price(amount)} руб.</b>\n\n"
+            f"<i>Здесь будет кнопка ЮKassa для привязки карты и первого платежа. "
+            f"Дальнейшие списания будут происходить автоматически.</i>"
+        )
+
+    # Клавиатура с "оплатой" (эмуляция) и кнопкой отмены
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💳 Демо: Оплатить (ЮKassa)", callback_data="demo_success")
+    builder.button(text="❌ Отмена", callback_data=f"select_{course_id}")
+    builder.adjust(1)
+
+    await callback.message.edit_text(payment_text, reply_markup=builder.as_markup(), parse_mode="HTML")
+
+
+@dp.callback_query(F.data == "demo_success")
+async def demo_success_payment(callback: CallbackQuery):
+    """Демонстрация успешной оплаты и выдачи ссылки"""
+    text = (
+        "✅ <b>Оплата успешно прошла!</b>\n\n"
+        "Вот ваша персональная ссылка для доступа в закрытый канал:\n"
+        "👉 https://t.me/+AbCdEfGhIjKlMnOp\n\n"
+        "<i>(В реальном боте здесь будет генерироваться одноразовая пригласительная ссылка с помощью create_chat_invite_link)</i>"
+    )
+    await callback.message.edit_text(text, parse_mode="HTML")
+
+
+@dp.callback_query(F.data == "back_to_list")
+async def back_to_courses(callback: CallbackQuery):
+    """Возврат к списку курсов"""
+    # Удаляем старое меню
+    await callback.message.delete()
+    # Вызываем начальное меню заново
+    await cmd_start(callback.message)
+
+
+# --- ЗАПУСК БОТА ---
 async def main():
-    logging.basicConfig(level=logging.INFO)
-    print("Бот запущен и готов к работе!")
-    # Запускаем поллинг (опрос серверов Telegram)
+    print("Бот запущен. Нажмите Ctrl+C для остановки.")
+    # Удаляем вебхуки и запускаем поллинг (long-polling)
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Бот остановлен вручную.")
+    asyncio.run(main())
