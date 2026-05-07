@@ -1,0 +1,6 @@
+python-telegram-bot==22.7
+aiosqlite==0.22.1
+python-dotenv==1.2.2
+requests==2.33.1
+aiogram>=3.0.0
+python-dotenv
